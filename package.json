@@ -1,0 +1,19 @@
+{
+  "name": "veridex-x402-client",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite"
+  },
+  "dependencies": {
+    "@x402/core": "latest",
+    "@x402/evm": "latest",
+    "@x402/fetch": "latest",
+    "viem": "latest"
+  },
+  "devDependencies": {
+    "vite": "latest"
+  }
+}
