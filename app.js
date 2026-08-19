@@ -4,9 +4,17 @@ import { wrapFetchWithPaymentFromConfig } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 
 const EXPECTED_NETWORK = "eip155:84532";
+const EXPECTED_CHAIN_ID = "0x14a34";
 const EXPECTED_ASSET = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".toLowerCase();
 const EXPECTED_PAY_TO = "0x5A2324aA18613FAD4e44bDf0d6c73Ec1f6D87ff8".toLowerCase();
 const EXPECTED_AMOUNT = 10000n;
+const BASE_SEPOLIA_PARAMS = {
+  chainId: EXPECTED_CHAIN_ID,
+  chainName: "Base Sepolia",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: ["https://sepolia.base.org"],
+  blockExplorerUrls: ["https://sepolia.basescan.org"],
+};
 
 let walletClient = null;
 let walletAddress = null;
@@ -52,20 +60,48 @@ function selectPaymentRequirements(_version, accepts) {
   return baseSepoliaOption;
 }
 
+async function ensureBaseSepolia() {
+  const currentChainId = await window.ethereum.request({ method: "eth_chainId" });
+  if (String(currentChainId).toLowerCase() === EXPECTED_CHAIN_ID) return;
+
+  setStatus(`Switching wallet to Base Sepolia... current chain ${currentChainId}`);
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: EXPECTED_CHAIN_ID }],
+    });
+  } catch (error) {
+    if (error?.code !== 4902) throw error;
+
+    setStatus("Base Sepolia is not configured in the wallet. Adding it automatically...");
+    await window.ethereum.request({
+      method: "wallet_addEthereumChain",
+      params: [BASE_SEPOLIA_PARAMS],
+    });
+
+    // Important: adding a chain does not guarantee that the wallet switches to it.
+    // Explicitly switch again after the chain has been added.
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: EXPECTED_CHAIN_ID }],
+    });
+  }
+
+  const verifiedChainId = await window.ethereum.request({ method: "eth_chainId" });
+  if (String(verifiedChainId).toLowerCase() !== EXPECTED_CHAIN_ID) {
+    throw new Error(`Could not switch wallet to Base Sepolia. Current chainId: ${verifiedChainId}`);
+  }
+}
+
 async function connectWallet() {
   if (!window.ethereum) throw new Error("No injected wallet detected. Open this page in Brave with Brave Wallet enabled.");
   setStatus("Connecting Brave Wallet...");
   const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
   if (!Array.isArray(accounts) || accounts.length === 0) throw new Error("Wallet returned no accounts.");
   walletAddress = accounts[0];
-  try {
-    await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x14a34" }] });
-  } catch (error) {
-    if (error?.code !== 4902) throw error;
-    await window.ethereum.request({ method: "wallet_addEthereumChain", params: [{ chainId: "0x14a34", chainName: "Base Sepolia", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: ["https://sepolia.base.org"], blockExplorerUrls: ["https://sepolia.basescan.org"] }] });
-  }
-  const chainId = await window.ethereum.request({ method: "eth_chainId" });
-  if (chainId !== "0x14a34") throw new Error(`Wallet is not on Base Sepolia. Current chainId: ${chainId}`);
+
+  await ensureBaseSepolia();
+
   walletClient = createWalletClient({ account: walletAddress, chain: baseSepolia, transport: custom(window.ethereum) });
   const signer = { address: walletAddress, signTypedData: async (message) => walletClient.signTypedData({ account: walletAddress, domain: message.domain, types: message.types, primaryType: message.primaryType, message: message.message }) };
   fetchWithPayment = wrapFetchWithPaymentFromConfig(fetch, { schemes: [{ network: EXPECTED_NETWORK, client: new ExactEvmScheme(signer) }], paymentRequirementsSelector: selectPaymentRequirements });
@@ -109,6 +145,6 @@ async function analyze() {
   }
 }
 
-connectButton.addEventListener("click", async () => { try { await connectWallet(); } catch (error) { console.error(error); setStatus("Wallet connection failed"); show({ error: error.message }); } });
+connectButton.addEventListener("click", async () => { try { await connectWallet(); } catch (error) { console.error(error); setStatus("Wallet connection failed"); show({ error: error.message, code: error?.code ?? null }); } });
 analyzeButton.addEventListener("click", async () => { try { await analyze(); } catch (error) { console.error(error); setStatus("Analysis/payment failed"); show({ error: error.message }); recordPayment({ status: "client_error", wallet: walletAddress, contractAddress: document.querySelector("#contract").value.trim(), error: error.message, reason: "Client-side failure before a successful analysis response." }); } });
-show({ ready: true, payment: { network: EXPECTED_NETWORK, amount: EXPECTED_AMOUNT.toString(), asset: EXPECTED_ASSET, payTo: EXPECTED_PAY_TO } });
+show({ ready: true, payment: { network: EXPECTED_NETWORK, amount: EXPECTED_AMOUNT.toString(), asset: EXPECTED_ASSET, payTo: EXPECTED_PAY_TO }, walletNetwork: { chainId: 84532, name: "Base Sepolia", automaticSwitch: true } });
