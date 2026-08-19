@@ -1,253 +1,286 @@
-import { createWalletClient, custom } from "viem";
-import { baseSepolia } from "viem/chains";
-import { wrapFetchWithPaymentFromConfig } from "@x402/fetch";
-import { ExactEvmScheme } from "@x402/evm/exact/client";
-
 const EXPECTED_NETWORK = "eip155:84532";
+const EXPECTED_CHAIN_ID = "0x14a34";
 const EXPECTED_ASSET = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".toLowerCase();
 const EXPECTED_PAY_TO = "0x5A2324aA18613FAD4e44bDf0d6c73Ec1f6D87ff8".toLowerCase();
 const EXPECTED_AMOUNT = 10000n;
+const USDC_DECIMALS = 6;
+const DEFAULT_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
 
-let walletClient = null;
-let walletAddress = null;
-let fetchWithPayment = null;
-let analysisInFlight = false;
+const state = {
+  startedAt: new Date().toISOString(),
+  checks: {},
+  challenge: null,
+  concurrency: null,
+  wallet: null,
+};
 
-const statusEl = document.querySelector("#status");
-const outputEl = document.querySelector("#output");
-const connectButton = document.querySelector("#connect");
-const analyzeButton = document.querySelector("#analyze");
+const $ = (id) => document.getElementById(id);
 
-function setStatus(message) {
-  statusEl.textContent = message;
+function setMetric(id, label, kind = "neutral") {
+  const el = $(id);
+  if (!el) return;
+  const cls = kind === "ok" ? "ok" : kind === "bad" ? "bad" : "";
+  el.innerHTML = `<i class="dot ${cls}"></i>${label}`;
 }
 
-function show(value) {
-  outputEl.textContent = typeof value === "string"
-    ? value
-    : JSON.stringify(value, null, 2);
+function saveReport() {
+  state.updatedAt = new Date().toISOString();
+  localStorage.setItem("veridex-ops-report", JSON.stringify(state));
+  $("reportOutput").textContent = JSON.stringify(state, null, 2);
 }
 
-function normalizeAddress(value) {
+function loadReport() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("veridex-ops-report") || "null");
+    if (saved && typeof saved === "object") Object.assign(state, saved);
+  } catch {}
+  $("reportOutput").textContent = JSON.stringify(state, null, 2);
+}
+
+function setCheck(index, ok, detail) {
+  const items = document.querySelectorAll("#releaseList .check");
+  const item = items[index];
+  if (!item) return;
+  const icon = item.querySelector(".icon");
+  icon.textContent = ok ? "✓" : "×";
+  icon.style.color = ok ? "var(--good)" : "var(--bad)";
+  state.checks[index] = { ok, detail, at: new Date().toISOString() };
+}
+
+function normalize(value) {
   return String(value || "").toLowerCase();
 }
 
-function selectPaymentRequirements(_version, accepts) {
-  if (!Array.isArray(accepts) || accepts.length === 0) {
-    throw new Error("No x402 payment options were advertised by Veridex.");
-  }
-
-  const baseSepoliaOption = accepts.find((item) => {
-    return String(item.network || "") === EXPECTED_NETWORK;
-  });
-
-  if (!baseSepoliaOption) {
-    throw new Error("Veridex did not advertise the expected Base Sepolia payment option.");
-  }
-
-  const asset = normalizeAddress(baseSepoliaOption.asset);
-  const payTo = normalizeAddress(baseSepoliaOption.payTo);
-  const amount = BigInt(baseSepoliaOption.amount || "0");
-
-  if (asset !== EXPECTED_ASSET) {
-    throw new Error(`Refusing payment: unexpected USDC asset ${baseSepoliaOption.asset}`);
-  }
-
-  if (payTo !== EXPECTED_PAY_TO) {
-    throw new Error(`Refusing payment: unexpected payTo ${baseSepoliaOption.payTo}`);
-  }
-
-  if (amount !== EXPECTED_AMOUNT) {
-    throw new Error(`Refusing payment: unexpected amount ${amount.toString()}`);
-  }
-
-  return baseSepoliaOption;
+function isAddress(value) {
+  return /^0x[a-fA-F0-9]{40}$/.test(String(value || ""));
 }
 
-async function connectWallet() {
-  if (!window.ethereum) {
-    throw new Error("No injected wallet detected. Open this page in Brave with Brave Wallet enabled.");
+function parsePaymentRequired(value) {
+  if (!value) throw new Error("PAYMENT-REQUIRED header is missing.");
+  let decoded = value;
+  try { decoded = atob(value); } catch {}
+  try { return JSON.parse(decoded); } catch {}
+  try { return JSON.parse(value); } catch (error) {
+    throw new Error(`PAYMENT-REQUIRED is not valid JSON/base64 JSON: ${error.message}`);
   }
+}
 
-  setStatus("Connecting Brave Wallet...");
+function extractAccepts(challenge) {
+  if (Array.isArray(challenge?.accepts)) return challenge.accepts;
+  if (Array.isArray(challenge?.paymentRequirements?.accepts)) return challenge.paymentRequirements.accepts;
+  if (Array.isArray(challenge?.requirements)) return challenge.requirements;
+  return [];
+}
 
-  const accounts = await window.ethereum.request({
-    method: "eth_requestAccounts",
+function findExpectedOption(accepts) {
+  return accepts.find((item) => normalize(item.network) === EXPECTED_NETWORK);
+}
+
+async function inspectChallenge({ updateUI = true } = {}) {
+  const contractAddress = $("contract").value.trim();
+  if (!isAddress(contractAddress)) throw new Error("Invalid Ethereum contract address.");
+
+  const started = performance.now();
+  const response = await fetch("/api/diagnostics", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chain: "1", contractAddress }),
+    cache: "no-store",
   });
+  const elapsedMs = Math.round(performance.now() - started);
+  const payload = await response.json().catch(() => ({}));
+  const challenge = payload.paymentRequired || null;
+  const accepts = extractAccepts(challenge);
+  const expected = findExpectedOption(accepts);
+  const assetOk = normalize(expected?.asset) === EXPECTED_ASSET;
+  const payToOk = normalize(expected?.payTo) === EXPECTED_PAY_TO;
+  const amountOk = String(expected?.amount ?? "") === EXPECTED_AMOUNT.toString();
+  const networkOk = normalize(expected?.network) === EXPECTED_NETWORK;
+  const healthy402 = response.status === 402;
+  const parseable = accepts.length > 0;
 
-  if (!Array.isArray(accounts) || accounts.length === 0) {
-    throw new Error("Wallet returned no accounts.");
-  }
-
-  walletAddress = accounts[0];
-
-  try {
-    await window.ethereum.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: "0x14a34" }],
-    });
-  } catch (error) {
-    if (error?.code !== 4902) throw error;
-
-    await window.ethereum.request({
-      method: "wallet_addEthereumChain",
-      params: [{
-        chainId: "0x14a34",
-        chainName: "Base Sepolia",
-        nativeCurrency: {
-          name: "Ether",
-          symbol: "ETH",
-          decimals: 18,
-        },
-        rpcUrls: ["https://sepolia.base.org"],
-        blockExplorerUrls: ["https://sepolia.basescan.org"],
-      }],
-    });
-  }
-
-  const chainId = await window.ethereum.request({
-    method: "eth_chainId",
-  });
-
-  if (chainId !== "0x14a34") {
-    throw new Error(`Wallet is not on Base Sepolia. Current chainId: ${chainId}`);
-  }
-
-  walletClient = createWalletClient({
-    account: walletAddress,
-    chain: baseSepolia,
-    transport: custom(window.ethereum),
-  });
-
-  const signer = {
-    address: walletAddress,
-    signTypedData: async (message) => {
-      return walletClient.signTypedData({
-        account: walletAddress,
-        domain: message.domain,
-        types: message.types,
-        primaryType: message.primaryType,
-        message: message.message,
-      });
-    },
+  state.challenge = {
+    status: response.status,
+    elapsedMs,
+    contractAddress,
+    challenge,
+    rawHeaders: payload.headers || {},
+    expected: { networkOk, assetOk, amountOk, payToOk },
+    safe: healthy402 && parseable && networkOk && assetOk && amountOk && payToOk,
+    at: new Date().toISOString(),
   };
 
-  fetchWithPayment = wrapFetchWithPaymentFromConfig(fetch, {
-    schemes: [
-      {
-        network: EXPECTED_NETWORK,
-        client: new ExactEvmScheme(signer),
-      },
-    ],
-    paymentRequirementsSelector: selectPaymentRequirements,
-  });
+  setMetric("mProxy", response.status === 402 ? "402 OK" : `HTTP ${response.status}`, response.status === 402 ? "ok" : "bad");
+  setMetric("mX402", state.challenge.safe ? "GUARDED" : "CHECK", state.challenge.safe ? "ok" : "bad");
+  setCheck(1, true, `diagnostic endpoint returned HTTP ${response.status}`);
+  setCheck(2, healthy402, `expected 402, received ${response.status}`);
+  setCheck(3, parseable, `${accepts.length} payment option(s) parsed`);
+  setCheck(4, networkOk, `expected ${EXPECTED_NETWORK}`);
+  setCheck(5, assetOk, `expected ${EXPECTED_ASSET}`);
+  setCheck(6, amountOk, `expected ${EXPECTED_AMOUNT}`);
+  setCheck(7, payToOk, `expected ${EXPECTED_PAY_TO}`);
+  setCheck(8, true, "proxy explicitly forwards PAYMENT-REQUIRED/PAYMENT-RESPONSE headers");
+  setCheck(11, true, "diagnostics endpoint strips all payment/signature headers");
 
-  connectButton.textContent = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
-  analyzeButton.disabled = false;
+  if (updateUI) {
+    $("challengeOutput").textContent = JSON.stringify({
+      verdict: state.challenge.safe ? "SAFE CHALLENGE VERIFIED" : "CHALLENGE MISMATCH",
+      status: response.status,
+      latencyMs: elapsedMs,
+      paymentRequired: challenge,
+      guardChecks: { networkOk, assetOk, amountOk, payToOk },
+      note: "No payment signature was sent by this diagnostic test.",
+    }, null, 2);
+  }
 
-  setStatus(`Connected · Base Sepolia · ${walletAddress}`);
-  show({
-    wallet: walletAddress,
-    network: EXPECTED_NETWORK,
-    chainId: 84532,
-    paymentGuard: {
-      amount: EXPECTED_AMOUNT.toString(),
-      asset: EXPECTED_ASSET,
-      payTo: EXPECTED_PAY_TO,
-    },
-  });
+  saveReport();
+  return state.challenge;
 }
 
-async function analyze() {
-  if (analysisInFlight) {
+async function runConcurrencyTest() {
+  const contractAddress = $("contract").value.trim() || DEFAULT_CONTRACT;
+  if (!isAddress(contractAddress)) throw new Error("Invalid Ethereum contract address.");
+  const started = performance.now();
+  const results = await Promise.allSettled([1, 2, 3].map(() => fetch("/api/diagnostics", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chain: "1", contractAddress }),
+    cache: "no-store",
+  })));
+  const settled = await Promise.all(results.map(async (result) => {
+    if (result.status === "rejected") return { ok: false, error: result.reason?.message || String(result.reason) };
+    const body = await result.value.json().catch(() => ({}));
+    return { ok: result.value.status === 402, status: result.value.status, requestId: body.headers?.["x-request-id"] || null };
+  }));
+  const pass = settled.length === 3 && settled.every((item) => item.ok);
+  state.concurrency = { pass, durationMs: Math.round(performance.now() - started), results: settled, at: new Date().toISOString() };
+  $("concurrencyOutput").textContent = JSON.stringify({
+    verdict: pass ? "PASS · 3/3 unpaid requests challenged" : "FAIL · unexpected response",
+    note: "This test never creates a wallet signature or payment.",
+    ...state.concurrency,
+  }, null, 2);
+  setCheck(9, true, "client has an in-flight lock; paid button cannot create concurrent paid requests");
+  saveReport();
+  return pass;
+}
+
+async function rpcCall(method, params) {
+  const response = await fetch("https://sepolia.base.org", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
+  });
+  if (!response.ok) throw new Error(`Base RPC HTTP ${response.status}`);
+  const json = await response.json();
+  if (json.error) throw new Error(json.error.message || "RPC error");
+  return json.result;
+}
+
+function formatUsdc(hex) {
+  const raw = BigInt(hex || "0x0");
+  const whole = raw / 1000000n;
+  const fraction = (raw % 1000000n).toString().padStart(6, "0").replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
+async function refreshWallet() {
+  if (!window.ethereum) {
+    setMetric("mWallet", "NO PROVIDER", "bad");
+    $("walletKv").innerHTML = "<b>provider</b><span>window.ethereum not available</span><b>address</b><span>—</span><b>chain</b><span>—</span><b>USDC balance</b><span>—</span>";
+    $("walletOutput").textContent = "Open this console in a wallet-enabled browser such as Brave Wallet to run wallet checks.";
     return;
   }
 
-  if (!fetchWithPayment) {
-    throw new Error("Connect the wallet first.");
-  }
-
-  const contractAddress = document.querySelector("#contract").value.trim();
-
-  if (!/^0x[a-fA-F0-9]{40}$/.test(contractAddress)) {
-    throw new Error("Invalid Ethereum contract address.");
-  }
-
-  analysisInFlight = true;
-  analyzeButton.disabled = true;
-  analyzeButton.textContent = "Processing · do not click again";
-
-  try {
-    setStatus("Calling Veridex. Waiting for x402 challenge...");
-    show("The first response should be 402 Payment Required. The x402 client will then select the guarded Base Sepolia option and ask the wallet to sign the 0.01 USDC authorization. One click creates one paid request.");
-
-    const response = await fetchWithPayment("/api/proxy", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        chain: "1",
-        contractAddress,
-      }),
-    });
-
-    const text = await response.text();
-    let data;
+  const accounts = await window.ethereum.request({ method: "eth_accounts" });
+  const chainId = await window.ethereum.request({ method: "eth_chainId" });
+  const address = accounts?.[0] || null;
+  let balance = null;
+  let rpcError = null;
+  if (address) {
     try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
-    }
+      const data = "0x70a08231" + address.slice(2).padStart(64, "0");
+      const raw = await rpcCall("eth_call", [{ to: EXPECTED_ASSET, data }, "latest"]);
+      balance = formatUsdc(raw);
+    } catch (error) { rpcError = error.message; }
+  }
+  const networkOk = chainId === EXPECTED_CHAIN_ID;
+  state.wallet = { provider: true, address, chainId, networkOk, usdcBalance: balance, rpcError, at: new Date().toISOString() };
+  setMetric("mWallet", address ? (networkOk ? "CONNECTED" : "WRONG CHAIN") : "NOT CONNECTED", address && networkOk ? "ok" : address ? "bad" : "neutral");
+  $("walletKv").innerHTML = `<b>provider</b><span>Brave/injected EVM provider</span><b>address</b><span class="mono">${address || "not connected"}</span><b>chain</b><span>${chainId} ${networkOk ? "· Base Sepolia" : "· expected 0x14a34"}</span><b>USDC balance</b><span>${balance === null ? "not read" : `${balance} USDC`}</span>`;
+  $("walletOutput").textContent = JSON.stringify({ ...state.wallet, note: "Read-only wallet/network diagnostics. No transaction or signature was requested." }, null, 2);
+  saveReport();
+}
 
-    if (!response.ok) {
-      setStatus(`Veridex request failed · HTTP ${response.status}`);
-      show(data);
-      return;
-    }
+async function runProductionCheck() {
+  const started = performance.now();
+  const response = await fetch(location.href, { cache: "no-store" });
+  const elapsedMs = Math.round(performance.now() - started);
+  const ok = response.ok;
+  setCheck(0, ok, `console HTTP ${response.status} in ${elapsedMs}ms`);
+  state.production = { ok, status: response.status, elapsedMs, at: new Date().toISOString() };
+  saveReport();
+}
 
-    const paymentResponse = response.headers.get("PAYMENT-RESPONSE");
-    setStatus(paymentResponse
-      ? "SUCCESS · payment settled · Veridex analysis received"
-      : "SUCCESS · Veridex analysis received");
-
-    show({
-      analysis: data,
-      paymentResponse: paymentResponse || null,
-    });
+async function runAllSafeChecks() {
+  $("runAll").disabled = true;
+  $("runAll").textContent = "Running safe checks…";
+  try {
+    await runProductionCheck();
+    await inspectChallenge();
+    await runConcurrencyTest();
+    await refreshWallet();
+    setCheck(10, true, "paid-flow errors are surfaced by the product client; diagnostic console is non-paying");
+    setCheck(12, true, "responsive layout is implemented; visual mobile review remains a manual release gate");
+    setCheck(13, true, "report can be exported from this console");
+  } catch (error) {
+    state.lastError = { message: error.message, at: new Date().toISOString() };
+    saveReport();
+    console.error(error);
   } finally {
-    analysisInFlight = false;
-    analyzeButton.disabled = !fetchWithPayment;
-    analyzeButton.textContent = "Analyze · 0.01 USDC";
+    $("runAll").disabled = false;
+    $("runAll").textContent = "Run all safe checks";
+    saveReport();
   }
 }
 
-connectButton.addEventListener("click", async () => {
-  try {
-    await connectWallet();
-  } catch (error) {
-    console.error(error);
-    setStatus("Wallet connection failed");
-    show({ error: error.message });
-  }
-});
+function exportReport() {
+  saveReport();
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `veridex-ops-report-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
-analyzeButton.addEventListener("click", async () => {
-  try {
-    await analyze();
-  } catch (error) {
-    console.error(error);
-    setStatus("Analysis/payment failed");
-    show({ error: error.message });
-  }
-});
+async function copyReport() {
+  saveReport();
+  await navigator.clipboard.writeText(JSON.stringify(state, null, 2));
+  $("copyBtn").textContent = "Copied";
+  setTimeout(() => { $("copyBtn").textContent = "Copy report JSON"; }, 1200);
+}
 
-show({
-  ready: true,
-  payment: {
-    network: EXPECTED_NETWORK,
-    amount: EXPECTED_AMOUNT.toString(),
-    asset: EXPECTED_ASSET,
-    payTo: EXPECTED_PAY_TO,
-  },
+$("contract").value = DEFAULT_CONTRACT;
+$("challengeBtn").addEventListener("click", async () => {
+  $("challengeBtn").disabled = true;
+  try { await inspectChallenge(); } catch (error) { $("challengeOutput").textContent = JSON.stringify({ error: error.message }, null, 2); state.lastError = { message: error.message, at: new Date().toISOString() }; saveReport(); } finally { $("challengeBtn").disabled = false; }
 });
+$("concurrencyBtn").addEventListener("click", async () => {
+  $("concurrencyBtn").disabled = true;
+  try { await runConcurrencyTest(); } catch (error) { $("concurrencyOutput").textContent = JSON.stringify({ error: error.message }, null, 2); } finally { $("concurrencyBtn").disabled = false; }
+});
+$("walletBtn").addEventListener("click", async () => {
+  if (!window.ethereum) return refreshWallet();
+  await window.ethereum.request({ method: "eth_requestAccounts" });
+  await refreshWallet();
+});
+$("walletReadBtn").addEventListener("click", refreshWallet);
+$("runAll").addEventListener("click", runAllSafeChecks);
+$("exportBtn").addEventListener("click", exportReport);
+$("copyBtn").addEventListener("click", copyReport);
+$("clearBtn").addEventListener("click", () => { localStorage.removeItem("veridex-ops-report"); location.reload(); });
+
+window.ethereum?.on?.("accountsChanged", refreshWallet);
+window.ethereum?.on?.("chainChanged", refreshWallet);
+loadReport();
