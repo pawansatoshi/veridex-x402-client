@@ -22,6 +22,23 @@ function setStatus(message) { statusEl.textContent = message; }
 function show(value) { outputEl.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2); }
 function normalizeAddress(value) { return String(value || "").toLowerCase(); }
 
+function decodePaymentResponse(value) {
+  if (!value) return null;
+  for (const candidate of [value, (() => { try { return atob(value); } catch { return ""; } })()]) {
+    try { return JSON.parse(candidate); } catch {}
+  }
+  return null;
+}
+
+function recordPayment(entry) {
+  try {
+    const key = "veridex-payment-history";
+    const existing = JSON.parse(localStorage.getItem(key) || "[]");
+    existing.unshift({ id: crypto.randomUUID(), recordedAt: new Date().toISOString(), ...entry });
+    localStorage.setItem(key, JSON.stringify(existing.slice(0, 50)));
+  } catch (error) { console.warn("Could not persist payment evidence", error); }
+}
+
 function selectPaymentRequirements(_version, accepts) {
   if (!Array.isArray(accepts) || accepts.length === 0) throw new Error("No x402 payment options were advertised by Veridex.");
   const baseSepoliaOption = accepts.find((item) => String(item.network || "") === EXPECTED_NETWORK);
@@ -63,20 +80,28 @@ async function analyze() {
   if (!fetchWithPayment) throw new Error("Connect the wallet first.");
   const contractAddress = document.querySelector("#contract").value.trim();
   if (!/^0x[a-fA-F0-9]{40}$/.test(contractAddress)) throw new Error("Invalid Ethereum contract address.");
+  const startedAt = new Date().toISOString();
   analysisInFlight = true;
   analyzeButton.disabled = true;
   analyzeButton.textContent = "Processing · do not click again";
   try {
     setStatus("Calling Veridex. Waiting for x402 challenge...");
-    show("The first response should be 402 Payment Required. The x402 client will then select the guarded Base Sepolia option and ask the wallet to sign the 0.01 USDC authorization. One click creates one paid request.");
+    show("The first response should be 402 Payment Required. The x402 client then selects the guarded Base Sepolia option and asks the wallet to sign the 0.01 USDC authorization. One click creates one paid request.");
     const response = await fetchWithPayment("/api/proxy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chain: "1", contractAddress }) });
     const text = await response.text();
     let data;
     try { data = JSON.parse(text); } catch { data = text; }
-    if (!response.ok) { setStatus(`Veridex request failed · HTTP ${response.status}`); show(data); return; }
-    const paymentResponse = response.headers.get("PAYMENT-RESPONSE");
-    setStatus(paymentResponse ? "SUCCESS · payment settled · Veridex analysis received" : "SUCCESS · Veridex analysis received");
-    show({ analysis: data, paymentResponse: paymentResponse || null });
+    const paymentResponseRaw = response.headers.get("PAYMENT-RESPONSE");
+    const paymentResponse = decodePaymentResponse(paymentResponseRaw);
+    if (!response.ok) {
+      recordPayment({ status: "failed", startedAt, completedAt: new Date().toISOString(), wallet: walletAddress, contractAddress, httpStatus: response.status, error: data?.error || data?.message || String(data), reason: data?.errorReason || data?.invalidReason || "Request did not complete." });
+      setStatus(`Veridex request failed · HTTP ${response.status}`);
+      show({ error: data, paymentResponse });
+      return;
+    }
+    recordPayment({ status: paymentResponse?.success === false ? "settlement_failed" : "success", startedAt, completedAt: new Date().toISOString(), wallet: walletAddress, contractAddress, httpStatus: response.status, transaction: paymentResponse?.transaction || null, network: paymentResponse?.network || EXPECTED_NETWORK, payer: paymentResponse?.payer || walletAddress, amount: paymentResponse?.amount || EXPECTED_AMOUNT.toString(), asset: paymentResponse?.asset || EXPECTED_ASSET, reason: paymentResponse?.errorReason || "Veridex x402 analysis payment", paymentResponse });
+    setStatus(paymentResponse?.transaction ? "SUCCESS · payment settled · transaction captured" : "SUCCESS · analysis received · settlement hash not returned");
+    show({ analysis: data, paymentResponse });
   } finally {
     analysisInFlight = false;
     analyzeButton.disabled = !fetchWithPayment;
@@ -85,5 +110,5 @@ async function analyze() {
 }
 
 connectButton.addEventListener("click", async () => { try { await connectWallet(); } catch (error) { console.error(error); setStatus("Wallet connection failed"); show({ error: error.message }); } });
-analyzeButton.addEventListener("click", async () => { try { await analyze(); } catch (error) { console.error(error); setStatus("Analysis/payment failed"); show({ error: error.message }); } });
+analyzeButton.addEventListener("click", async () => { try { await analyze(); } catch (error) { console.error(error); setStatus("Analysis/payment failed"); show({ error: error.message }); recordPayment({ status: "client_error", wallet: walletAddress, contractAddress: document.querySelector("#contract").value.trim(), error: error.message, reason: "Client-side failure before a successful analysis response." }); } });
 show({ ready: true, payment: { network: EXPECTED_NETWORK, amount: EXPECTED_AMOUNT.toString(), asset: EXPECTED_ASSET, payTo: EXPECTED_PAY_TO } });
