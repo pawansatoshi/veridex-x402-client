@@ -1,7 +1,6 @@
 import { createWalletClient, custom } from "viem";
 import { baseSepolia } from "viem/chains";
-import { x402Client } from "@x402/core/client";
-import { wrapFetchWithPayment } from "@x402/fetch";
+import { wrapFetchWithPaymentFromConfig } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 
 const EXPECTED_NETWORK = "eip155:84532";
@@ -32,27 +31,36 @@ function normalizeAddress(value) {
   return String(value || "").toLowerCase();
 }
 
-function assertExpectedPayment(requirements) {
-  const network = String(requirements.network || "");
-  const asset = normalizeAddress(requirements.asset);
-  const payTo = normalizeAddress(requirements.payTo);
-  const amount = BigInt(requirements.amount || "0");
-
-  if (network !== EXPECTED_NETWORK) {
-    throw new Error(`Refusing payment: unexpected network ${network}`);
+function selectPaymentRequirements(_version, accepts) {
+  if (!Array.isArray(accepts) || accepts.length === 0) {
+    throw new Error("No x402 payment options were advertised by Veridex.");
   }
 
+  const baseSepoliaOption = accepts.find((item) => {
+    return String(item.network || "") === EXPECTED_NETWORK;
+  });
+
+  if (!baseSepoliaOption) {
+    throw new Error("Veridex did not advertise the expected Base Sepolia payment option.");
+  }
+
+  const asset = normalizeAddress(baseSepoliaOption.asset);
+  const payTo = normalizeAddress(baseSepoliaOption.payTo);
+  const amount = BigInt(baseSepoliaOption.amount || "0");
+
   if (asset !== EXPECTED_ASSET) {
-    throw new Error(`Refusing payment: unexpected asset ${requirements.asset}`);
+    throw new Error(`Refusing payment: unexpected USDC asset ${baseSepoliaOption.asset}`);
   }
 
   if (payTo !== EXPECTED_PAY_TO) {
-    throw new Error(`Refusing payment: unexpected payTo ${requirements.payTo}`);
+    throw new Error(`Refusing payment: unexpected payTo ${baseSepoliaOption.payTo}`);
   }
 
   if (amount !== EXPECTED_AMOUNT) {
     throw new Error(`Refusing payment: unexpected amount ${amount.toString()}`);
   }
+
+  return baseSepoliaOption;
 }
 
 async function connectWallet() {
@@ -123,10 +131,15 @@ async function connectWallet() {
     },
   };
 
-  const client = new x402Client()
-    .register(EXPECTED_NETWORK, new ExactEvmScheme(signer));
-
-  fetchWithPayment = wrapFetchWithPayment(fetch, client);
+  fetchWithPayment = wrapFetchWithPaymentFromConfig(fetch, {
+    schemes: [
+      {
+        network: EXPECTED_NETWORK,
+        client: new ExactEvmScheme(signer),
+      },
+    ],
+    paymentRequirementsSelector: selectPaymentRequirements,
+  });
 
   connectButton.textContent = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
   analyzeButton.disabled = false;
@@ -136,6 +149,11 @@ async function connectWallet() {
     wallet: walletAddress,
     network: EXPECTED_NETWORK,
     chainId: 84532,
+    paymentGuard: {
+      amount: EXPECTED_AMOUNT.toString(),
+      asset: EXPECTED_ASSET,
+      payTo: EXPECTED_PAY_TO,
+    },
   });
 }
 
@@ -151,7 +169,7 @@ async function analyze() {
   }
 
   setStatus("Calling Veridex. Waiting for x402 challenge...");
-  show("The first response should be 402 Payment Required. The x402 client will then select Base Sepolia and ask the wallet to sign the 0.01 USDC authorization.");
+  show("The first response should be 402 Payment Required. The x402 client will then select the guarded Base Sepolia option and ask the wallet to sign the 0.01 USDC authorization.");
 
   const response = await fetchWithPayment("/api/proxy", {
     method: "POST",
@@ -178,8 +196,15 @@ async function analyze() {
     return;
   }
 
-  setStatus("SUCCESS · Veridex analysis received");
-  show(data);
+  const paymentResponse = response.headers.get("PAYMENT-RESPONSE");
+  setStatus(paymentResponse
+    ? "SUCCESS · payment settled · Veridex analysis received"
+    : "SUCCESS · Veridex analysis received");
+
+  show({
+    analysis: data,
+    paymentResponse: paymentResponse || null,
+  });
 }
 
 connectButton.addEventListener("click", async () => {
