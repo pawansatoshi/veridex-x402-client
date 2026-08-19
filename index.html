@@ -3,69 +3,53 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Veridex QA, x402 payment-flow diagnostics, release gates, links, and production debugging console." />
-  <meta name="theme-color" content="#07090d" />
-  <title>Veridex Ops Console</title>
+  <meta name="description" content="Veridex smart-contract risk analysis through Telegraph x402." />
+  <title>Veridex × Telegraph x402</title>
   <style>
-    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; --bg:#07090d; --panel:#0d1118; --line:#202a38; --text:#eef2f7; --muted:#8c98a8; --good:#56d39a; --warn:#f3c969; --bad:#ff6b7a; --accent:#8db4ff; }
-    * { box-sizing: border-box; } html { scroll-behavior:smooth; }
-    body { margin:0; min-height:100vh; background:radial-gradient(circle at 20% -10%,#172033 0,transparent 35%),var(--bg); color:var(--text); }
-    a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
-    button,input { font:inherit; } button { border:1px solid var(--line); background:#151c27; color:var(--text); border-radius:10px; padding:11px 14px; cursor:pointer; font-weight:700; }
-    button:hover:not(:disabled) { border-color:#3b4b61; background:#192333; } button.primary { background:#e9eef7; color:#080b10; border-color:#e9eef7; } button.danger { border-color:#51313a; } button:disabled { opacity:.45; cursor:not-allowed; }
-    .shell { width:min(1280px,100%); margin:auto; padding:20px 16px 64px; }
-    .topbar { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 0 20px; position:sticky; top:0; z-index:10; background:linear-gradient(var(--bg) 70%,transparent); backdrop-filter:blur(10px); }
-    .brand { display:flex; gap:12px; align-items:center; } .mark { width:38px; height:38px; border:1px solid #344154; border-radius:11px; display:grid; place-items:center; background:#0f1520; font-weight:900; }
-    .brand strong { display:block; font-size:15px; } .brand span { display:block; color:var(--muted); font-size:12px; margin-top:2px; } .actions { display:flex; flex-wrap:wrap; gap:7px; justify-content:flex-end; }
-    .hero { border:1px solid var(--line); background:linear-gradient(135deg,#0e141d,#0b0f16); border-radius:18px; padding:22px; box-shadow:0 18px 50px rgba(0,0,0,.22); }
-    .eyebrow { color:#7f8da1; text-transform:uppercase; letter-spacing:.16em; font-size:11px; font-weight:800; } h1 { margin:7px 0 8px; font-size:clamp(28px,5vw,48px); line-height:1.02; }
-    .hero p { max-width:880px; color:#aeb8c6; line-height:1.6; margin:0; } .warning { margin-top:15px; padding:12px 14px; border:1px solid #4a3b20; background:#17130b; color:#d8c48b; border-radius:10px; font-size:13px; line-height:1.5; }
-    .grid { display:grid; grid-template-columns:repeat(12,1fr); gap:12px; margin-top:12px; } .card { grid-column:span 12; border:1px solid var(--line); background:rgba(13,17,24,.94); border-radius:15px; padding:16px; }
-    .span6 { grid-column:span 6; } .span4 { grid-column:span 4; } .span8 { grid-column:span 8; } .card h2 { font-size:16px; margin:0 0 5px; } .card .desc { color:var(--muted); font-size:12px; line-height:1.5; margin:0 0 13px; }
-    .links { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; } .link { border:1px solid var(--line); border-radius:10px; padding:11px 12px; background:#0a0f16; min-width:0; }
-    .link b { display:block; font-size:13px; } .link small { display:block; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:4px; }
-    .metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; } .metric { border:1px solid var(--line); background:#0a0f16; border-radius:11px; padding:12px; min-height:76px; }
-    .metric .label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; } .metric .value { margin-top:6px; font-size:15px; font-weight:800; }
-    .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; background:#697789; } .ok { background:var(--good); } .bad { background:var(--bad); }
-    .formrow { display:grid; grid-template-columns:1fr auto; gap:8px; } input { width:100%; padding:12px; border-radius:10px; border:1px solid #2c3746; background:#080c12; color:var(--text); outline:none; } input:focus { border-color:#536b8a; }
-    .checklist { display:grid; gap:7px; } .check { display:flex; align-items:flex-start; gap:9px; padding:9px 10px; border:1px solid var(--line); border-radius:9px; background:#0a0f16; }
-    .check .icon { width:18px; flex:0 0 18px; text-align:center; } .check strong { font-size:12px; } .check span { display:block; color:var(--muted); font-size:11px; margin-top:2px; line-height:1.4; }
-    .kv { display:grid; grid-template-columns:150px 1fr; gap:7px 12px; font-size:12px; } .kv b { color:#9ba7b7; font-weight:600; } .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all; }
-    pre { margin:12px 0 0; padding:13px; background:#070a0f; border:1px solid var(--line); border-radius:10px; overflow:auto; max-height:420px; white-space:pre-wrap; word-break:break-word; font-size:11px; line-height:1.55; }
-    .toolbar { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; } .pill { display:inline-flex; align-items:center; gap:6px; padding:5px 8px; border-radius:999px; border:1px solid var(--line); color:#aab4c2; font-size:11px; }
-    .footer { color:#687587; font-size:11px; padding:20px 2px 0; line-height:1.6; }
-    @media(max-width:850px){ .span6,.span4,.span8{grid-column:span 12}.metrics{grid-template-columns:repeat(2,1fr)} }
-    @media(max-width:560px){ .topbar{position:static}.shell{padding:12px 10px 40px}.hero{padding:16px}.links{grid-template-columns:1fr}.formrow{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.kv{grid-template-columns:110px 1fr}.actions button{padding:9px 10px;font-size:12px} }
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #050505; color: #f5f5f5; }
+    .shell { width: min(920px, 100%); margin: 0 auto; padding: 32px 18px 56px; }
+    .eyebrow { color: #9ca3af; font-size: 12px; letter-spacing: .18em; text-transform: uppercase; }
+    h1 { margin: 8px 0 8px; font-size: clamp(30px, 7vw, 52px); line-height: 1; }
+    .sub { color: #a1a1aa; max-width: 700px; line-height: 1.6; }
+    .card { margin-top: 24px; border: 1px solid #27272a; background: #0b0b0c; border-radius: 16px; padding: 18px; }
+    label { display: block; color: #a1a1aa; font-size: 13px; margin-bottom: 7px; }
+    input { width: 100%; padding: 14px; border-radius: 10px; border: 1px solid #3f3f46; background: #09090b; color: #fff; font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+    button { width: 100%; border: 0; border-radius: 10px; padding: 14px; cursor: pointer; background: #f5f5f5; color: #09090b; font-weight: 700; }
+    button.secondary { background: #18181b; color: #fff; border: 1px solid #3f3f46; }
+    button.link { display:flex; align-items:center; justify-content:center; text-decoration:none; background:#111113; color:#fff; border:1px solid #3f3f46; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .status { margin-top: 14px; padding: 12px; border-radius: 10px; background: #111113; color: #d4d4d8; font-size: 14px; line-height: 1.5; }
+    pre { margin: 14px 0 0; padding: 14px; border-radius: 10px; border: 1px solid #27272a; background: #050505; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.55; }
+    .notice { margin-top: 12px; color: #71717a; font-size: 12px; line-height: 1.5; }
+    @media (max-width: 620px) { .row { grid-template-columns: 1fr; } .shell { padding-top: 22px; } }
   </style>
 </head>
 <body>
-<main class="shell">
-  <header class="topbar"><div class="brand"><div class="mark">V</div><div><strong>Veridex Ops Console</strong><span>QA · x402 · payments · API · release verification</span></div></div><div class="actions"><button id="runAll" class="primary">Run all safe checks</button><button id="exportBtn">Export report</button></div></header>
-  <section class="hero"><div class="eyebrow">internal engineering control plane</div><h1>One place to find, reproduce, debug, and verify Veridex.</h1><p>This site is intentionally an operations and QA console, not the Veridex product. Keep product development isolated while using this console for safe diagnostics, x402 challenge inspection, wallet/network checks, regression gates, deployment verification, and release evidence.</p><div class="warning"><strong>PAYMENT SAFETY:</strong> all automated diagnostics on this page are unpaid challenge checks. They must stop at HTTP 402 and must never sign or settle a payment. The live paid flow is linked separately and requires an explicit wallet action.</div></section>
-  <div class="grid">
-    <section class="card span8"><h2>Quick links</h2><p class="desc">Every destination needed during debugging, without hunting through tabs.</p><div class="links">
-      <a class="link" href="https://veridex-x402-client.vercel.app" target="_blank" rel="noopener"><b>Production app</b><small>veridex-x402-client.vercel.app</small></a>
-      <a class="link" href="https://github.com/pawansatoshi/veridex-x402-client" target="_blank" rel="noopener"><b>GitHub repository</b><small>source, commits, issues</small></a>
-      <a class="link" href="https://vercel.com/pawansatoshis-projects/veridex-x402-client" target="_blank" rel="noopener"><b>Vercel project</b><small>deployments and logs</small></a>
-      <a class="link" href="https://sepolia.basescan.org" target="_blank" rel="noopener"><b>Base Sepolia explorer</b><small>network and transaction verification</small></a>
-      <a class="link" href="https://sepolia.basescan.org/address/0x036CbD53842c5426634e7929541eC2318f3dCF7e" target="_blank" rel="noopener"><b>Base Sepolia USDC</b><small>payment asset contract</small></a>
-      <a class="link" href="https://sepolia.basescan.org/address/0x5A2324aA18613FAD4e44bDf0d6c73Ec1f6D87ff8" target="_blank" rel="noopener"><b>x402 payTo address</b><small>expected recipient</small></a>
-    </div></section>
-    <section class="card span4"><h2>Live console status</h2><p class="desc">Updated locally whenever checks run.</p><div class="metrics">
-      <div class="metric"><div class="label">Console</div><div class="value" id="mConsole"><i class="dot ok"></i>READY</div></div><div class="metric"><div class="label">Proxy</div><div class="value" id="mProxy"><i class="dot"></i>NOT TESTED</div></div><div class="metric"><div class="label">x402</div><div class="value" id="mX402"><i class="dot"></i>NOT TESTED</div></div><div class="metric"><div class="label">Wallet</div><div class="value" id="mWallet"><i class="dot"></i>NOT CONNECTED</div></div>
-    </div></section>
-    <section class="card span8" id="diagnostics"><h2>Safe upstream + x402 diagnostics</h2><p class="desc">Calls the diagnostic endpoint with no payment headers. Expected healthy behavior is HTTP 402 with a parseable payment challenge.</p><div class="formrow"><input id="contract" spellcheck="false" value="0xdAC17F958D2ee523a2206206994597C13D831ec7" aria-label="Ethereum contract address" /><button id="challengeBtn">Inspect 402 challenge</button></div><div class="toolbar" style="margin-top:9px"><span class="pill">chain: Ethereum mainnet</span><span class="pill">expected network: Base Sepolia</span><span class="pill">expected amount: 0.01 USDC</span><span class="pill">no settlement</span></div><pre id="challengeOutput">No challenge test has run yet.</pre></section>
-    <section class="card span4"><h2>Payment guard</h2><p class="desc">Hard guard values used by the client. The challenge must match all four.</p><div class="kv"><b>network</b><span class="mono">eip155:84532</span><b>chainId</b><span class="mono">84532</span><b>asset</b><span class="mono">0x036CbD53842c5426634e7929541eC2318f3dCF7e</span><b>amount</b><span class="mono">10000 base units = 0.01 USDC</span><b>payTo</b><span class="mono">0x5A2324aA18613FAD4e44bDf0d6c73Ec1f6D87ff8</span></div></section>
-    <section class="card span6"><h2>Wallet & network lab</h2><p class="desc">Read-only checks first. Connecting the wallet does not initiate payment.</p><div class="toolbar"><button id="walletBtn">Connect wallet</button><button id="walletReadBtn">Refresh wallet checks</button></div><div class="kv" id="walletKv"><b>provider</b><span>not checked</span><b>address</b><span>not checked</span><b>chain</b><span>not checked</span><b>USDC balance</b><span>not checked</span></div><pre id="walletOutput">Wallet diagnostics have not run.</pre></section>
-    <section class="card span6"><h2>Duplicate-request regression lab</h2><p class="desc">Safe concurrency test: sends three unpaid challenge requests and verifies that the upstream returns three independent 402 responses. It never signs.</p><div class="toolbar"><button id="concurrencyBtn">Run 3-request test</button></div><pre id="concurrencyOutput">Concurrency regression test has not run.</pre></section>
-    <section class="card span8"><h2>Release gate</h2><p class="desc">The console records evidence for the production-readiness lifecycle: build → audit → fix → deploy → verify → re-audit → release.</p><div class="checklist" id="releaseList">
-      <div class="check"><div class="icon">○</div><div><strong>Production URL reachable</strong><span>HTTP 200 from the deployed console.</span></div></div><div class="check"><div class="icon">○</div><div><strong>Diagnostic proxy reachable</strong><span>/api/diagnostics responds without exposing a paid flow.</span></div></div><div class="check"><div class="icon">○</div><div><strong>Upstream returns 402</strong><span>Unauthenticated analysis request is challenged, not executed for free.</span></div></div><div class="check"><div class="icon">○</div><div><strong>Payment challenge parseable</strong><span>PAYMENT-REQUIRED is valid JSON and contains accepts.</span></div></div><div class="check"><div class="icon">○</div><div><strong>Network guard matches</strong><span>Only eip155:84532 is accepted by the client.</span></div></div><div class="check"><div class="icon">○</div><div><strong>Asset guard matches</strong><span>Only the expected Base Sepolia USDC contract is accepted.</span></div></div><div class="check"><div class="icon">○</div><div><strong>Amount guard matches</strong><span>Only 10000 base units is accepted.</span></div></div><div class="check"><div class="icon">○</div><div><strong>payTo guard matches</strong><span>Only the expected recipient is accepted.</span></div></div><div class="check"><div class="icon">○</div><div><strong>Payment response forwarding</strong><span>Successful paid requests must expose PAYMENT-RESPONSE to the client.</span></div></div><div class="check"><div class="icon">○</div><div><strong>Duplicate-click protection</strong><span>Paid analysis button must lock while a request is in flight.</span></div></div><div class="check"><div class="icon">○</div><div><strong>Error handling</strong><span>Wallet rejection, invalid address, 4xx, 5xx, and upstream outage are surfaced clearly.</span></div></div><div class="check"><div class="icon">○</div><div><strong>Security boundary</strong><span>No seed phrase/private key input; diagnostics never forwards payment headers.</span></div></div><div class="check"><div class="icon">○</div><div><strong>Mobile usability</strong><span>Controls and JSON remain usable on narrow screens.</span></div></div><div class="check"><div class="icon">○</div><div><strong>Release evidence exported</strong><span>Latest results can be exported as JSON for the release record.</span></div></div>
-    </div></section>
-    <section class="card span4"><h2>What to verify before release</h2><p class="desc">High-value checks that belong here as the project grows.</p><div class="checklist"><div class="check"><div class="icon">1</div><div><strong>HTTP / x402 protocol</strong><span>402 challenge, exact scheme, exact network, exact asset, amount, recipient, response.</span></div></div><div class="check"><div class="icon">2</div><div><strong>Wallet behavior</strong><span>Chain switching, account switching, rejection, disconnected wallet, insufficient USDC, insufficient gas.</span></div></div><div class="check"><div class="icon">3</div><div><strong>API resilience</strong><span>Timeouts, 502, malformed upstream JSON, missing headers, CORS, cache behavior.</span></div></div><div class="check"><div class="icon">4</div><div><strong>Contract input</strong><span>Invalid address, wrong chain, known contract, checksum/casing, empty input.</span></div></div><div class="check"><div class="icon">5</div><div><strong>Security</strong><span>Payment tampering, header injection, replay/double-click, secret handling, origin boundaries.</span></div></div><div class="check"><div class="icon">6</div><div><strong>Production</strong><span>Vercel build, function logs, deployment alias, latency, mobile, accessibility, release rollback.</span></div></div></div></section>
-    <section class="card"><h2>Latest diagnostic report</h2><p class="desc">Evidence from this browser session. Export before and after major fixes so regressions are measurable.</p><div class="toolbar"><button id="copyBtn">Copy report JSON</button><button id="clearBtn" class="danger">Clear local report</button></div><pre id="reportOutput">{}</pre></section>
-  </div>
-  <div class="footer">Internal QA console. Do not enter seed phrases, private keys, or other secrets. Safe automated checks intentionally stop at HTTP 402. A live paid test belongs in the production product and must always require an explicit wallet signature.</div>
-</main>
-<script type="module" src="/app.js"></script>
+  <main class="shell">
+    <div class="eyebrow">veridex · telegraph · x402</div>
+    <h1>Contract Risk Analysis</h1>
+    <p class="sub">Analyze an Ethereum contract through Veridex. The client uses Telegraph x402 and asks your wallet to authorize the advertised Base Sepolia USDC payment only when the miner returns a payment challenge.</p>
+
+    <section class="card">
+      <label for="contract">Ethereum contract address</label>
+      <input id="contract" spellcheck="false" value="0xdAC17F958D2ee523a2206206994597C13D831ec7" />
+
+      <div class="row">
+        <button id="connect">Connect Wallet</button>
+        <button id="analyze" class="secondary" disabled>Analyze · 0.01 USDC</button>
+      </div>
+      <div class="row">
+        <a class="link" href="/ops">Open Veridex Ops Console</a>
+      </div>
+
+      <div id="status" class="status">Wallet not connected.</div>
+      <pre id="output">Ready.</pre>
+      <div class="notice">Never enter a seed phrase or private key here. The wallet handles signing.</div>
+    </section>
+  </main>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>
