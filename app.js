@@ -11,6 +11,7 @@ const EXPECTED_AMOUNT = 10000n;
 let walletClient = null;
 let walletAddress = null;
 let fetchWithPayment = null;
+let analysisInFlight = false;
 
 const statusEl = document.querySelector("#status");
 const outputEl = document.querySelector("#output");
@@ -158,6 +159,10 @@ async function connectWallet() {
 }
 
 async function analyze() {
+  if (analysisInFlight) {
+    return;
+  }
+
   if (!fetchWithPayment) {
     throw new Error("Connect the wallet first.");
   }
@@ -168,43 +173,53 @@ async function analyze() {
     throw new Error("Invalid Ethereum contract address.");
   }
 
-  setStatus("Calling Veridex. Waiting for x402 challenge...");
-  show("The first response should be 402 Payment Required. The x402 client will then select the guarded Base Sepolia option and ask the wallet to sign the 0.01 USDC authorization.");
+  analysisInFlight = true;
+  analyzeButton.disabled = true;
+  analyzeButton.textContent = "Processing · do not click again";
 
-  const response = await fetchWithPayment("/api/proxy", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      chain: "1",
-      contractAddress,
-    }),
-  });
-
-  const text = await response.text();
-  let data;
   try {
-    data = JSON.parse(text);
-  } catch {
-    data = text;
+    setStatus("Calling Veridex. Waiting for x402 challenge...");
+    show("The first response should be 402 Payment Required. The x402 client will then select the guarded Base Sepolia option and ask the wallet to sign the 0.01 USDC authorization. One click creates one paid request.");
+
+    const response = await fetchWithPayment("/api/proxy", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        chain: "1",
+        contractAddress,
+      }),
+    });
+
+    const text = await response.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+
+    if (!response.ok) {
+      setStatus(`Veridex request failed · HTTP ${response.status}`);
+      show(data);
+      return;
+    }
+
+    const paymentResponse = response.headers.get("PAYMENT-RESPONSE");
+    setStatus(paymentResponse
+      ? "SUCCESS · payment settled · Veridex analysis received"
+      : "SUCCESS · Veridex analysis received");
+
+    show({
+      analysis: data,
+      paymentResponse: paymentResponse || null,
+    });
+  } finally {
+    analysisInFlight = false;
+    analyzeButton.disabled = !fetchWithPayment;
+    analyzeButton.textContent = "Analyze · 0.01 USDC";
   }
-
-  if (!response.ok) {
-    setStatus(`Veridex request failed · HTTP ${response.status}`);
-    show(data);
-    return;
-  }
-
-  const paymentResponse = response.headers.get("PAYMENT-RESPONSE");
-  setStatus(paymentResponse
-    ? "SUCCESS · payment settled · Veridex analysis received"
-    : "SUCCESS · Veridex analysis received");
-
-  show({
-    analysis: data,
-    paymentResponse: paymentResponse || null,
-  });
 }
 
 connectButton.addEventListener("click", async () => {
